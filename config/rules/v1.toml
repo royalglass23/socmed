@@ -1,0 +1,24 @@
+# This is a non-secret, versioned policy boundary. Classification logic follows in MT-268.
+version = "2026-08-24.1"
+brand = "Royal Glass"
+country = "NZ"
+
+[outcomes]
+classifications = ["direct", "adjacent", "supplier_ecosystem", "irrelevant"]
+review_outcome = "review_required"
+confidence_bands = ["high", "medium", "low"]
+tags = [
+  "pool-fencing",
+  "balustrades",
+  "both",
+  "broad-glazier",
+  "supplier-with-installation",
+  "regional",
+  "residential",
+  "commercial",
+]
+
+[safeguards]
+fetch_failure_outcome = "review_required"
+irrelevant_requires_human_review = true
+protected_override_is_authoritative = true

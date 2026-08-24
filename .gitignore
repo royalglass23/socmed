@@ -1,0 +1,12 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+
+# Local outputs and Python caches
+data/output/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+.venv/
