@@ -53,4 +53,16 @@ Local Python foundation for Phase 4 competitor validation. It owns versioned rul
    expiry alongside compact evidence, and identical pages are linked to every immutable source row
    that produced them.
 
+7. Classify fetched records with the tracked deterministic rubric:
+
+   ```powershell
+   python -m royal_glass_validator classify --confirm-development-neon
+   ```
+
+   Only clear official evidence of Tier 1 glass balustrade or pool-fencing delivery in New Zealand is auto-approved as
+   Direct. Clear official Adjacent and Supplier / Ecosystem evidence may also auto-approve; Irrelevant, incomplete,
+   conflicting, and failed evidence remain Review Required. The command links a Source Record only when one existing
+   Competitor Entity has a compatible normalized official domain or a matching verified phone and name. Auckland
+   evidence raises the linked entity's monitoring priority without changing eligibility.
+
 The migration runner requires an explicit confirmation and a code-reviewed, exact development target identity in `config/development-target.toml`. It records a SHA-256 checksum for every applied migration, refuses altered applied files, and never prints the connection string.

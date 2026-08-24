@@ -45,6 +45,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm that the configured target is the explicitly approved development Neon database",
     )
+    classify_parser = subcommands.add_parser(
+        "classify", help="classify fetched source records and link only high-certainty existing identities"
+    )
+    classify_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
     return parser
 
 
@@ -100,6 +108,43 @@ def main(arguments: Sequence[str] | None = None) -> int:
             evidence_count = sum(summary.evidence_count for summary in summaries)
             failure_count = sum(summary.failure_count for summary in summaries)
             print(f"Captured {evidence_count} evidence page(s) and {failure_count} fetch failure(s) for {len(summaries)} source record(s).")
+            return 0
+        if args.command == "classify":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            ruleset = load_ruleset(settings.ruleset_path)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before classifying source records.") from error
+            try:
+                from royal_glass_validator.classification import classify_source_record, find_high_certainty_identity_match
+                from royal_glass_validator.postgres_classification import PostgresClassificationRepository
+
+                with psycopg.connect(settings.database_url) as connection:
+                    repository = PostgresClassificationRepository(connection)
+                    identities = repository.load_existing_identities()
+                    records = repository.load_unclassified_source_records()
+                    results = []
+                    for record in records:
+                        result = classify_source_record(record, rule_version=ruleset.version)
+                        identity_link = find_high_certainty_identity_match(record, identities)
+                        repository.record_decision(
+                            source_record_id=record.id,
+                            validation_run_id=record.validation_run_id,
+                            result=result,
+                            rule_version=ruleset.version,
+                            identity_link=identity_link,
+                        )
+                        results.append((result, identity_link))
+            except Exception as error:
+                raise MigrationError("Could not classify source records; inspect the local database client securely.") from error
+            auto_approved_count = sum(result.auto_approved for result, _ in results)
+            linked_count = sum(identity_link is not None for _, identity_link in results)
+            print(
+                f"Classified {len(results)} source record(s): {auto_approved_count} auto-approved, "
+                f"{len(results) - auto_approved_count} requiring review, {linked_count} high-certainty identity link(s)."
+            )
             return 0
         development_target = load_development_database_target(PROJECT_ROOT)
         validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
