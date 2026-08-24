@@ -1,6 +1,6 @@
 # Royal Glass Validator
 
-Local Python foundation for Phase 4 competitor validation. It owns versioned rules, the database migration contract, and a guarded development-Neon import of the authoritative Needs Validation workbook; it does not fetch websites, classify competitors, or send data externally yet.
+Local Python foundation for Phase 4 competitor validation. It owns versioned rules, the database migration contract, a guarded development-Neon import of the authoritative Needs Validation workbook, and bounded official-site evidence capture; it does not classify competitors or send results to external systems.
 
 ## Local setup
 
@@ -38,5 +38,19 @@ Local Python foundation for Phase 4 competitor validation. It owns versioned rul
    only the `Needs Validation` worksheet, requires a unique `Entity ID` and a `Decision Group`
    beginning with `Needs Validation` for every imported row, and records the complete original row
    values, workbook checksum, worksheet, and source row number. It does not modify the workbook.
+
+6. Capture evidence for imported records that have no prior fetch outcome:
+
+   ```powershell
+   python -m royal_glass_validator fetch --confirm-development-neon
+   ```
+
+   The fetcher uses ordinary HTTP only: the homepage plus at most three relevant same-domain pages,
+   a 15-second timeout, and one retry for transient timeout, rate-limit, or server failures. It
+   respects `robots.txt`, records each compact evidence item or fetch failure, and continues the
+   batch. Blocked, JavaScript-only, inaccessible, missing, and robots-restricted sites remain
+   `review_required`; there is no browser fallback. Raw page snapshots are retained with a 90-day
+   expiry alongside compact evidence, and identical pages are linked to every immutable source row
+   that produced them.
 
 The migration runner requires an explicit confirmation and a code-reviewed, exact development target identity in `config/development-target.toml`. It records a SHA-256 checksum for every applied migration, refuses altered applied files, and never prints the connection string.

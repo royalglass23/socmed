@@ -39,6 +39,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm that the configured target is the explicitly approved development Neon database",
     )
+    fetch_parser = subcommands.add_parser("fetch", help="capture bounded official-site evidence for unfetched source records")
+    fetch_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
     return parser
 
 
@@ -74,6 +80,26 @@ def main(arguments: Sequence[str] | None = None) -> int:
             except Exception as error:
                 raise MigrationError("Could not import the workbook; inspect the local database client securely.") from error
             print(f"Imported {summary.imported_record_count} source record(s) from {summary.input_workbook_name}.")
+            return 0
+        if args.command == "fetch":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before fetching website evidence.") from error
+            try:
+                from royal_glass_validator.postgres_evidence import PostgresEvidenceRepository
+                from royal_glass_validator.website_fetch import WebsiteEvidenceFetcher
+
+                with psycopg.connect(settings.database_url) as connection:
+                    repository = PostgresEvidenceRepository(connection)
+                    summaries = WebsiteEvidenceFetcher(repository).fetch_records(repository.load_unfetched_source_records())
+            except Exception as error:
+                raise MigrationError("Could not capture website evidence; inspect the local database client securely.") from error
+            evidence_count = sum(summary.evidence_count for summary in summaries)
+            failure_count = sum(summary.failure_count for summary in summaries)
+            print(f"Captured {evidence_count} evidence page(s) and {failure_count} fetch failure(s) for {len(summaries)} source record(s).")
             return 0
         development_target = load_development_database_target(PROJECT_ROOT)
         validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
