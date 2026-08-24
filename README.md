@@ -1,6 +1,6 @@
 # Royal Glass Validator
 
-Local Python foundation for Phase 4 competitor validation. It owns versioned rules and the database migration contract; it does not import workbooks, fetch websites, classify competitors, or send data externally yet.
+Local Python foundation for Phase 4 competitor validation. It owns versioned rules, the database migration contract, and a guarded development-Neon import of the authoritative Needs Validation workbook; it does not fetch websites, classify competitors, or send data externally yet.
 
 ## Local setup
 

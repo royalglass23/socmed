@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 from typing import Any, Protocol
@@ -78,6 +79,11 @@ def prepare_workbook_import(
         raise ImportValidationError(f"Input workbook does not exist: {workbook_path.name}")
     if workbook_path.suffix.casefold() != ".xlsx":
         raise ImportValidationError("Input workbook must be an .xlsx file.")
+    try:
+        workbook_bytes = workbook_path.read_bytes()
+    except OSError as error:
+        raise ImportValidationError(f"Could not read the input workbook: {workbook_path.name}") from error
+    workbook_sha256 = sha256(workbook_bytes).hexdigest()
 
     try:
         from openpyxl import load_workbook
@@ -86,7 +92,7 @@ def prepare_workbook_import(
         raise ImportValidationError("Install workbook import dependencies before importing an .xlsx file.") from error
 
     try:
-        workbook = load_workbook(workbook_path, read_only=True, data_only=False)
+        workbook = load_workbook(BytesIO(workbook_bytes), read_only=True, data_only=False)
     except (InvalidFileException, OSError, ValueError) as error:
         raise ImportValidationError(f"Could not read the input workbook: {workbook_path.name}") from error
 
@@ -94,13 +100,13 @@ def prepare_workbook_import(
         worksheet = _select_needs_validation_worksheet(workbook)
         headers = _read_headers(worksheet)
         records = _read_source_records(worksheet, headers, workbook_path)
+        worksheet_title = worksheet.title
     finally:
         workbook.close()
 
     if not records:
         raise ImportValidationError("Needs Validation worksheet contains no source records.")
 
-    workbook_sha256 = sha256(workbook_path.read_bytes()).hexdigest()
     run_id = uuid4()
     run = ImportedRun(
         id=run_id,
@@ -108,7 +114,7 @@ def prepare_workbook_import(
         input_workbook_sha256=workbook_sha256,
         input_provenance={
             "source_system": "royal_glass_competitor_workbook",
-            "worksheet": worksheet.title,
+            "worksheet": worksheet_title,
             "header_names": headers,
             "cohort": "Needs Validation",
         },
@@ -122,7 +128,7 @@ def prepare_workbook_import(
                 validation_run_id=run_id,
                 entity_id=entity_id,
                 source_system="royal_glass_competitor_workbook",
-                source_locator=worksheet.title,
+                source_locator=worksheet_title,
                 input_row_number=row_number,
                 original_values=values,
                 original_value_hash=_stable_value_hash(values),

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from openpyxl import Workbook
 
@@ -84,6 +86,34 @@ class NeedsValidationWorkbookImportTests(unittest.TestCase):
                 import_workbook(workbook_path, repository, rule_version="2026-08-24.1")
 
         self.assertEqual(repository.imports, [])
+
+    def test_preserves_one_input_snapshot_when_the_source_path_changes_during_parsing(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workbook_path = Path(temporary_directory) / "royal-glass.xlsx"
+            _write_workbook(
+                workbook_path,
+                needs_validation_rows=[("RG-C0204", "Original Glass", "Needs Validation", 3.9)],
+                confirmed_rows=[],
+            )
+            original_bytes = workbook_path.read_bytes()
+            repository = RecordingImportRepository()
+            from openpyxl import load_workbook as original_load_workbook
+
+            def load_then_replace_source(*args: object, **kwargs: object) -> object:
+                workbook = original_load_workbook(*args, **kwargs)
+                _write_workbook(
+                    workbook_path,
+                    needs_validation_rows=[("RG-C0204", "Replacement Glass", "Needs Validation", 4.2)],
+                    confirmed_rows=[],
+                )
+                return workbook
+
+            with patch("openpyxl.load_workbook", side_effect=load_then_replace_source):
+                import_workbook(workbook_path, repository, rule_version="2026-08-24.1")
+
+        run, records = repository.imports[0]
+        self.assertEqual(run.input_workbook_sha256, sha256(original_bytes).hexdigest())
+        self.assertEqual(records[0].original_values["Canonical Name"], "Original Glass")
 
 
 class PostgresWorkbookImportRepositoryTests(unittest.TestCase):
