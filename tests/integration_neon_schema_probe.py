@@ -38,8 +38,10 @@ def main() -> None:
     failed_run_id = uuid4()
     audited_run_id = uuid4()
     source_record_id = uuid4()
+    alternate_source_record_id = uuid4()
     decision_id = uuid4()
     evidence_id = uuid4()
+    entity_id = uuid4()
 
     with psycopg.connect(settings.database_url) as connection:
         try:
@@ -98,6 +100,57 @@ def main() -> None:
                     ) VALUES (%s, %s, %s, 'https://example.test/', 'contract probe', now(), %s, 'official_site')
                     """,
                     (evidence_id, source_record_id, audited_run_id, "d" * 64),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO page_evidence_source_records (page_evidence_id, source_record_id, validation_run_id)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (evidence_id, source_record_id, audited_run_id),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO competitor_entities (id, legal_name, display_name, normalized_name)
+                    VALUES (%s, 'Contract Probe Glass Limited', 'Contract Probe Glass', 'contractprobeglass')
+                    """,
+                    (entity_id,),
+                )
+                expect_rejection(
+                    cursor,
+                    """
+                    INSERT INTO human_overrides (
+                        id, competitor_entity_id, classification_decision_id, source_record_id,
+                        classification, rationale, reviewer_identity
+                    ) VALUES (%s, %s, %s, %s, 'adjacent', 'contract probe', 'contract probe reviewer')
+                    """,
+                    (uuid4(), entity_id, decision_id, source_record_id),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO entity_links (
+                        id, competitor_entity_id, source_record_id, link_method, certainty, linked_by, rationale
+                    ) VALUES (%s, %s, %s, 'reviewer_resolved', 'reviewer_confirmed', 'reviewer', 'contract probe')
+                    """,
+                    (uuid4(), entity_id, source_record_id),
+                )
+                expect_rejection(
+                    cursor,
+                    """
+                    INSERT INTO human_overrides (
+                        id, competitor_entity_id, classification_decision_id, source_record_id,
+                        classification, rationale, reviewer_identity
+                    ) VALUES (%s, %s, %s, %s, 'adjacent', 'contract probe', 'contract probe reviewer')
+                    """,
+                    (uuid4(), entity_id, decision_id, alternate_source_record_id),
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO human_overrides (
+                        id, competitor_entity_id, classification_decision_id, source_record_id,
+                        classification, rationale, reviewer_identity
+                    ) VALUES (%s, %s, %s, %s, 'adjacent', 'contract probe', 'contract probe reviewer')
+                    """,
+                    (uuid4(), entity_id, decision_id, source_record_id),
                 )
                 cursor.execute(
                     "UPDATE validation_runs SET outcome = 'completed', completed_at = now() WHERE id = %s",

@@ -65,4 +65,32 @@ Local Python foundation for Phase 4 competitor validation. It owns versioned rul
    Competitor Entity has a compatible normalized official domain or a matching verified phone and name. Auckland
    evidence raises the linked entity's monitoring priority without changing eligibility.
 
+8. Export the latest reviewer view to a dated, one-way workbook:
+
+   ```powershell
+   python -m royal_glass_validator export --confirm-development-neon
+   ```
+
+   The export contains immutable source values, proposals, confidence, compact evidence, fetch errors,
+   high-certainty identity links, and the active protected override. A disagreement between an automated
+   proposal and that override is explicitly marked for revalidation; exporting does not alter stored data.
+
+9. For an identity-unlinked record, explicitly link it to an existing entity or create a new entity before overriding it:
+
+   ```powershell
+   python -m royal_glass_validator resolve-identity --confirm-development-neon --decision-id <decision-uuid> --entity-id <entity-uuid> --rationale "Verified by the official contact details." --reviewer "Reviewer name"
+   ```
+
+   To create a new entity instead, replace `--entity-id` with `--legal-name` and `--display-name` (with optional
+   `--primary-domain` and `--verified-phone`). Identity resolution is explicit and never replaces an existing link.
+
+10. Record a protected, attributable human decision through the explicit review command (the workbook is not an upload path):
+
+   ```powershell
+   python -m royal_glass_validator override --confirm-development-neon --decision-id <decision-uuid> --classification adjacent --rationale "Official evidence supports an adjacent service only." --reviewer "Reviewer name"
+   ```
+
+   A reviewer must provide both their identity and rationale. Existing overrides remain immutable and can only be
+   replaced through an explicit `--supersedes-override-id` value; a conflicting future automation result cannot replace them.
+
 The migration runner requires an explicit confirmation and a code-reviewed, exact development target identity in `config/development-target.toml`. It records a SHA-256 checksum for every applied migration, refuses altered applied files, and never prints the connection string.

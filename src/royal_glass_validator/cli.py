@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Sequence
+from uuid import UUID
 
 from royal_glass_validator.config import (
     ConfigurationError,
@@ -53,6 +54,44 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm that the configured target is the explicitly approved development Neon database",
     )
+    export_parser = subcommands.add_parser("export", help="create a dated, one-way reviewer Excel export")
+    export_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
+    export_parser.add_argument(
+        "--output-directory",
+        type=Path,
+        default=PROJECT_ROOT / "exports",
+        help="local directory for the dated reviewer workbook (default: exports)",
+    )
+    override_parser = subcommands.add_parser("override", help="append a protected, attributed reviewer override")
+    override_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
+    override_parser.add_argument("--decision-id", type=UUID, required=True, help="classification decision UUID to override")
+    override_parser.add_argument(
+        "--classification",
+        choices=("direct", "adjacent", "supplier_ecosystem", "irrelevant"),
+        required=True,
+        help="reviewer classification that remains authoritative until explicitly superseded",
+    )
+    override_parser.add_argument("--rationale", required=True, help="reviewer's evidence-backed reason for this decision")
+    override_parser.add_argument("--reviewer", required=True, help="attributable reviewer identity")
+    override_parser.add_argument("--supersedes-override-id", type=UUID, help="active override UUID being explicitly superseded")
+    resolve_parser = subcommands.add_parser("resolve-identity", help="explicitly link or create an entity before a protected override")
+    resolve_parser.add_argument("--confirm-development-neon", action="store_true", help="confirm the approved development Neon database")
+    resolve_parser.add_argument("--decision-id", type=UUID, required=True, help="unlinked classification decision UUID")
+    resolve_parser.add_argument("--entity-id", type=UUID, help="existing Competitor Entity UUID to link")
+    resolve_parser.add_argument("--legal-name", help="legal name when creating a new Competitor Entity")
+    resolve_parser.add_argument("--display-name", help="display name when creating a new Competitor Entity")
+    resolve_parser.add_argument("--primary-domain", help="optional official domain for a new Competitor Entity")
+    resolve_parser.add_argument("--verified-phone", help="optional verified phone for a new Competitor Entity")
+    resolve_parser.add_argument("--rationale", required=True, help="reviewer's evidence-backed identity rationale")
+    resolve_parser.add_argument("--reviewer", required=True, help="attributable reviewer identity")
     return parser
 
 
@@ -145,6 +184,71 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 f"Classified {len(results)} source record(s): {auto_approved_count} auto-approved, "
                 f"{len(results) - auto_approved_count} requiring review, {linked_count} high-certainty identity link(s)."
             )
+            return 0
+        if args.command == "export":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before exporting a reviewer workbook.") from error
+            try:
+                from royal_glass_validator.postgres_review import PostgresReviewerRepository
+                from royal_glass_validator.reviewer_export import export_reviewer_workbook
+
+                with psycopg.connect(settings.database_url) as connection:
+                    rows = PostgresReviewerRepository(connection).load_reviewer_rows()
+                output_path = export_reviewer_workbook(rows, args.output_directory)
+            except Exception as error:
+                raise MigrationError("Could not export the reviewer workbook; inspect the local database client securely.") from error
+            print(f"Exported {len(rows)} review record(s) to {output_path}.")
+            return 0
+        if args.command == "override":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before recording a reviewer override.") from error
+            try:
+                from royal_glass_validator.postgres_review import PostgresReviewerRepository
+
+                with psycopg.connect(settings.database_url) as connection:
+                    PostgresReviewerRepository(connection).record_override(
+                        classification_decision_id=args.decision_id,
+                        classification=args.classification,
+                        rationale=args.rationale,
+                        reviewer_identity=args.reviewer,
+                        supersedes_override_id=args.supersedes_override_id,
+                    )
+            except Exception as error:
+                raise MigrationError("Could not record the protected reviewer override; inspect the local database client securely.") from error
+            print(f"Recorded protected override for classification decision {args.decision_id}.")
+            return 0
+        if args.command == "resolve-identity":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before resolving a reviewer identity.") from error
+            try:
+                from royal_glass_validator.postgres_review import PostgresReviewerRepository
+
+                with psycopg.connect(settings.database_url) as connection:
+                    entity_id = PostgresReviewerRepository(connection).resolve_identity(
+                        classification_decision_id=args.decision_id,
+                        existing_entity_id=args.entity_id,
+                        legal_name=args.legal_name,
+                        display_name=args.display_name,
+                        primary_domain=args.primary_domain,
+                        verified_phone=args.verified_phone,
+                        rationale=args.rationale,
+                        reviewer_identity=args.reviewer,
+                    )
+            except Exception as error:
+                raise MigrationError("Could not resolve the reviewer identity; inspect the local database client securely.") from error
+            print(f"Resolved classification decision {args.decision_id} to Competitor Entity {entity_id}.")
             return 0
         development_target = load_development_database_target(PROJECT_ROOT)
         validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
