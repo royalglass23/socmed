@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+from threading import active_count, Thread
+from time import monotonic, sleep
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 
@@ -132,6 +134,49 @@ class WebsiteEvidenceFetcherTests(unittest.TestCase):
         )
 
         self.assertEqual(urls, ["https://example.test/services"])
+
+    def test_records_timeouts_and_continues_when_a_request_never_returns_to_the_http_client(self) -> None:
+        from royal_glass_validator.website_fetch import FetchSourceRecord, WebsiteEvidenceFetcher
+
+        def stalled_urlopen(*args: object, **kwargs: object) -> object:
+            sleep(0.5)
+            raise AssertionError("The stalled request should be abandoned before it returns.")
+
+        repository = RecordingEvidenceRepository()
+        started_at = monotonic()
+        with patch("royal_glass_validator.website_fetch.urlopen", side_effect=stalled_urlopen):
+            summary = WebsiteEvidenceFetcher(repository, timeout_seconds=0.01).fetch_record(
+                FetchSourceRecord(id=uuid4(), validation_run_id=uuid4(), original_values={"Website": "https://stalled.example/"})
+            )
+        elapsed = monotonic() - started_at
+
+        self.assertLess(elapsed, 0.2)
+        self.assertEqual((summary.evidence_count, summary.failure_count), (0, 2))
+        self.assertEqual([(failure.failure_type, failure.attempt_number) for failure in repository.failures], [("timeout", 1), ("timeout", 2)])
+        sleep(0.55)
+
+    def test_bounds_abandoned_network_workers_when_repeated_requests_stall(self) -> None:
+        from royal_glass_validator.website_fetch import (
+            MAX_CONCURRENT_STALLED_HTTP_CALLS,
+            FetchSourceRecord,
+            WebsiteEvidenceFetcher,
+        )
+
+        def stalled_urlopen(*args: object, **kwargs: object) -> object:
+            sleep(0.25)
+            raise TimeoutError("late timeout")
+
+        repository = RecordingEvidenceRepository()
+        baseline_workers = active_count()
+        records = tuple(
+            FetchSourceRecord(id=uuid4(), validation_run_id=uuid4(), original_values={"Website": "https://stalled.example/"})
+            for _ in range(8)
+        )
+        with patch("royal_glass_validator.website_fetch.urlopen", side_effect=stalled_urlopen):
+            WebsiteEvidenceFetcher(repository, timeout_seconds=0.01).fetch_records(records)
+            self.assertLessEqual(active_count() - baseline_workers, MAX_CONCURRENT_STALLED_HTTP_CALLS)
+
+        sleep(0.3)
 
 
 def _html(title: str, text: str, *, links: list[str] | None = None) -> bytes:

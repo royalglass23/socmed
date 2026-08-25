@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from html.parser import HTMLParser
+from queue import Empty, Queue
 from socket import timeout as SocketTimeout
+from threading import BoundedSemaphore, Thread
 from typing import Protocol
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.error import HTTPError, URLError
@@ -18,8 +20,10 @@ from uuid import UUID, uuid4
 
 REQUEST_TIMEOUT_SECONDS = 15
 MAX_RELEVANT_PAGES = 3
+MAX_CONCURRENT_STALLED_HTTP_CALLS = 4
 WEBSITE_VALUE_KEYS = ("website", "website url", "url", "web address")
 RELEVANT_PATH_TERMS = ("service", "pool", "fenc", "balustrade", "about", "contact")
+_HTTP_CALL_SLOTS = BoundedSemaphore(MAX_CONCURRENT_STALLED_HTTP_CALLS)
 
 
 @dataclass(frozen=True)
@@ -189,6 +193,31 @@ def _website_url(values: Mapping[str, object]) -> str:
 
 
 def _http_get(url: str, timeout_seconds: float) -> tuple[bytes, str | None]:
+    """Bound ordinary HTTP, including DNS, without allowing stalled workers to grow unbounded."""
+    if not _HTTP_CALL_SLOTS.acquire(blocking=False):
+        raise _HttpFetchError("timeout", None, "Request timed out while networking capacity was exhausted.")
+    outcomes: Queue[tuple[bytes, str | None] | Exception] = Queue(maxsize=1)
+
+    def fetch_in_daemon_thread() -> None:
+        try:
+            outcomes.put(_http_get_once(url, timeout_seconds))
+        except Exception as error:
+            outcomes.put(error)
+        finally:
+            _HTTP_CALL_SLOTS.release()
+
+    thread = Thread(target=fetch_in_daemon_thread, daemon=True)
+    thread.start()
+    try:
+        outcome = outcomes.get(timeout=timeout_seconds)
+    except Empty as error:
+        raise _HttpFetchError("timeout", None, "Request timed out.") from error
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+
+
+def _http_get_once(url: str, timeout_seconds: float) -> tuple[bytes, str | None]:
     request = Request(url, headers={"User-Agent": "RoyalGlassValidator/0.1 (+ordinary HTTP evidence capture)"})
     try:
         with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310 - URLs are imported review candidates.

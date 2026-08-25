@@ -1,6 +1,6 @@
 # Royal Glass Validator
 
-Local Python foundation for Phase 4 competitor validation. It owns versioned rules, the database migration contract, a guarded development-Neon import of the authoritative Needs Validation workbook, and bounded official-site evidence capture; it does not classify competitors or send results to external systems.
+Local Python validator for Phase 4 competitor validation. It owns versioned rules, the database migration contract, a guarded development-Neon manual comparison run of the authoritative Needs Validation workbook, bounded official-site evidence capture, deterministic classification, protected reviewer overrides, and a reviewer workbook export. It does not schedule runs or send results to external systems.
 
 ## Local setup
 
@@ -52,6 +52,32 @@ Local Python foundation for Phase 4 competitor validation. It owns versioned rul
    `review_required`; there is no browser fallback. Raw page snapshots are retained with a 90-day
    expiry alongside compact evidence, and identical pages are linked to every immutable source row
    that produced them.
+
+   For the normal first or later manual run, use the single guarded command instead. It verifies the
+   25-case gold set before writing, imports the immutable workbook, rechecks only new or changed
+   records plus prior Direct, Adjacent, unresolved, and failed records, then prints a compact JSON
+   summary for a future caller. Supplier / Ecosystem records remain stored but are not monitored by
+   default.
+
+   ```powershell
+   python -m royal_glass_validator run --confirm-development-neon
+   ```
+
+   This command has no scheduler, n8n integration, or production target. A protected override is
+   never changed by the run; a later automated proposal can only appear as a reviewer revalidation
+   conflict.
+
+   If an ordinary-HTTP request is interrupted, do not re-import the workbook. Continue the retained
+   running run by UUID instead; this preserves its immutable Source Records and records timeouts as
+   review-required failures rather than allowing one stalled domain to block the whole cohort.
+
+   ```powershell
+   python -m royal_glass_validator resume --confirm-development-neon --run-id <validation-run-uuid>
+   ```
+
+   For a constrained shell or an intentionally small manual pass, add `--max-records 5`. Each invocation
+   commits its retained outcomes before returning and reports `"outcome":"running"` until the final batch;
+   repeat the same command and run UUID until it reports `"outcome":"completed"`.
 
 7. Classify fetched records with the tracked deterministic rubric:
 

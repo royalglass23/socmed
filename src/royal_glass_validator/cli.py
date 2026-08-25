@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 from uuid import UUID
 
 from royal_glass_validator.config import (
@@ -45,6 +46,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm-development-neon",
         action="store_true",
         help="confirm that the configured target is the explicitly approved development Neon database",
+    )
+    run_parser = subcommands.add_parser(
+        "run", help="manually compare the authoritative workbook and emit a compact structured summary"
+    )
+    run_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
+    resume_parser = subcommands.add_parser(
+        "resume", help="continue one interrupted manual comparison without importing another workbook"
+    )
+    resume_parser.add_argument(
+        "--confirm-development-neon",
+        action="store_true",
+        help="confirm that the configured target is the explicitly approved development Neon database",
+    )
+    resume_parser.add_argument("--run-id", type=UUID, required=True, help="still-running validation run UUID to continue")
+    resume_parser.add_argument(
+        "--max-records", type=_positive_int, help="durably process at most this many pending source records before returning"
     )
     classify_parser = subcommands.add_parser(
         "classify", help="classify fetched source records and link only high-certainty existing identities"
@@ -128,6 +149,58 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 raise MigrationError("Could not import the workbook; inspect the local database client securely.") from error
             print(f"Imported {summary.imported_record_count} source record(s) from {summary.input_workbook_name}.")
             return 0
+        if args.command == "run":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            workbook_path = _discover_authoritative_workbook(INPUT_DIRECTORY)
+            ruleset = load_ruleset(settings.ruleset_path)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before running a manual comparison.") from error
+            try:
+                from royal_glass_validator.manual_run import run_manual_comparison
+                from royal_glass_validator.postgres_manual_run import PostgresManualRunRepository
+                from royal_glass_validator.website_fetch import WebsiteEvidenceFetcher
+
+                with _open_durable_write_connection(psycopg, settings.database_url) as connection:
+                    repository = PostgresManualRunRepository(connection)
+                    summary = run_manual_comparison(
+                        workbook_path,
+                        repository,
+                        WebsiteEvidenceFetcher(repository),
+                        rule_version=ruleset.version,
+                    )
+            except Exception as error:
+                raise MigrationError("Could not complete the manual comparison run; inspect the local database client securely.") from error
+            print(_format_manual_run_summary(summary))
+            return 0
+        if args.command == "resume":
+            development_target = load_development_database_target(PROJECT_ROOT)
+            validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
+            ruleset = load_ruleset(settings.ruleset_path)
+            try:
+                import psycopg
+            except ImportError as error:
+                raise ConfigurationError("Install the project dependencies before resuming a manual comparison.") from error
+            try:
+                from royal_glass_validator.manual_run import resume_manual_comparison
+                from royal_glass_validator.postgres_manual_run import PostgresManualRunRepository
+                from royal_glass_validator.website_fetch import WebsiteEvidenceFetcher
+
+                with _open_durable_write_connection(psycopg, settings.database_url) as connection:
+                    repository = PostgresManualRunRepository(connection)
+                    summary = resume_manual_comparison(
+                        args.run_id,
+                        repository,
+                        WebsiteEvidenceFetcher(repository),
+                        rule_version=ruleset.version,
+                        max_records=args.max_records,
+                    )
+            except Exception as error:
+                raise MigrationError("Could not resume the manual comparison run; inspect the local database client securely.") from error
+            print(_format_manual_run_summary(summary))
+            return 0
         if args.command == "fetch":
             development_target = load_development_database_target(PROJECT_ROOT)
             validate_development_database_target(settings, development_target, confirmed=args.confirm_development_neon)
@@ -139,7 +212,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 from royal_glass_validator.postgres_evidence import PostgresEvidenceRepository
                 from royal_glass_validator.website_fetch import WebsiteEvidenceFetcher
 
-                with psycopg.connect(settings.database_url) as connection:
+                with _open_durable_write_connection(psycopg, settings.database_url) as connection:
                     repository = PostgresEvidenceRepository(connection)
                     summaries = WebsiteEvidenceFetcher(repository).fetch_records(repository.load_unfetched_source_records())
             except Exception as error:
@@ -160,7 +233,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 from royal_glass_validator.classification import classify_source_record, find_high_certainty_identity_match
                 from royal_glass_validator.postgres_classification import PostgresClassificationRepository
 
-                with psycopg.connect(settings.database_url) as connection:
+                with _open_durable_write_connection(psycopg, settings.database_url) as connection:
                     repository = PostgresClassificationRepository(connection)
                     identities = repository.load_existing_identities()
                     records = repository.load_unclassified_source_records()
@@ -273,3 +346,20 @@ def _discover_authoritative_workbook(input_directory: Path) -> Path:
     if len(workbooks) != 1:
         raise ImportValidationError("data/input must contain exactly one authoritative .xlsx workbook.")
     return workbooks[0]
+
+
+def _format_manual_run_summary(summary: object) -> str:
+    """Serialize the manual-run result for future callers without adding an integration."""
+    return json.dumps(summary.as_dict(), sort_keys=True, separators=(",", ":"))
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def _open_durable_write_connection(psycopg_module: Any, database_url: str) -> Any:
+    """Ensure every explicit repository transaction commits before the next network request."""
+    return psycopg_module.connect(database_url, autocommit=True)

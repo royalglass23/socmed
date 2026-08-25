@@ -134,26 +134,73 @@ class PostgresClassificationRepository:
             )
             rows = cursor.fetchall()
 
-        records: dict[object, SourceRecordForClassification] = {}
-        for row in rows:
-            source_record_id, validation_run_id, original_values, url, source_type, snippet, service_facts, region_facts, has_failure = row
-            current = records.get(source_record_id)
-            evidence = current.evidence if current else ()
-            if url is not None:
-                evidence += (
-                    EvidenceFact(
-                        url=str(url),
-                        source_type=str(source_type),
-                        evidence_snippet=str(snippet),
-                        service_facts=service_facts,
-                        region_facts=region_facts,
-                    ),
-                )
-            records[source_record_id] = SourceRecordForClassification(
-                id=source_record_id,
-                validation_run_id=validation_run_id,
-                original_values=original_values,
-                evidence=evidence,
-                has_fetch_failure=bool(has_failure),
+        return _classification_records_from_rows(rows)
+
+    def load_records_for_classification(
+        self, validation_run_id: object, source_record_ids: tuple[object, ...]
+    ) -> tuple[SourceRecordForClassification, ...]:
+        """Load only the selected immutable Source Records for one manual comparison run."""
+        if not source_record_ids:
+            return ()
+        with self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT source.id,
+                       source.validation_run_id,
+                       source.original_values,
+                       evidence.url,
+                       evidence.source_type,
+                       evidence.evidence_snippet,
+                       evidence.service_facts,
+                       evidence.region_facts,
+                       EXISTS (
+                           SELECT 1
+                             FROM fetch_failures AS failure
+                            WHERE failure.source_record_id = source.id
+                              AND failure.validation_run_id = source.validation_run_id
+                       ) AS has_fetch_failure
+                  FROM source_records AS source
+                  LEFT JOIN page_evidence_source_records AS evidence_link
+                    ON evidence_link.source_record_id = source.id
+                   AND evidence_link.validation_run_id = source.validation_run_id
+                  LEFT JOIN page_evidence AS evidence ON evidence.id = evidence_link.page_evidence_id
+                 WHERE source.validation_run_id = %s
+                   AND source.id = ANY(%s)
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM classification_decisions AS decision
+                        WHERE decision.source_record_id = source.id
+                          AND decision.validation_run_id = source.validation_run_id
+                   )
+                 ORDER BY source.input_row_number, evidence.fetched_at, evidence.id
+                """,
+                (validation_run_id, list(source_record_ids)),
             )
-        return tuple(records.values())
+            rows = cursor.fetchall()
+        return _classification_records_from_rows(rows)
+
+
+def _classification_records_from_rows(rows: list[tuple[object, ...]]) -> tuple[SourceRecordForClassification, ...]:
+    records: dict[object, SourceRecordForClassification] = {}
+    for row in rows:
+        source_record_id, validation_run_id, original_values, url, source_type, snippet, service_facts, region_facts, has_failure = row
+        current = records.get(source_record_id)
+        evidence = current.evidence if current else ()
+        if url is not None:
+            evidence += (
+                EvidenceFact(
+                    url=str(url),
+                    source_type=str(source_type),
+                    evidence_snippet=str(snippet),
+                    service_facts=service_facts,
+                    region_facts=region_facts,
+                ),
+            )
+        records[source_record_id] = SourceRecordForClassification(
+            id=source_record_id,
+            validation_run_id=validation_run_id,
+            original_values=original_values,
+            evidence=evidence,
+            has_fetch_failure=bool(has_failure),
+        )
+    return tuple(records.values())

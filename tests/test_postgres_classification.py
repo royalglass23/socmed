@@ -105,6 +105,27 @@ class PostgresClassificationRepositoryTests(unittest.TestCase):
         self.assertIn("page_evidence_source_records", connection.statements[0][0])
         self.assertIn("classification_decisions", connection.statements[0][0])
 
+    def test_loads_only_selected_comparison_records_for_one_manual_run(self) -> None:
+        from royal_glass_validator.postgres_classification import PostgresClassificationRepository
+
+        source_record_id = uuid4()
+        validation_run_id = uuid4()
+        connection = RecordingConnection(rows=[(
+            source_record_id, validation_run_id, {"Canonical Name": "Clear View Glass"},
+            "https://clearview.example/services", "official_site", "Glass balustrades in Auckland.",
+            {"services": ["balustrades"]}, {"regions": ["auckland"]}, False,
+        )])
+
+        records = PostgresClassificationRepository(connection).load_records_for_classification(
+            validation_run_id, (source_record_id,)
+        )
+
+        self.assertEqual([record.id for record in records], [source_record_id])
+        query, parameters = connection.statements[0]
+        self.assertIn("source.validation_run_id = %s", query)
+        self.assertIn("source.id = ANY(%s)", query)
+        self.assertEqual(parameters, (validation_run_id, [source_record_id]))
+
 
 class RecordingTransaction:
     def __init__(self, connection: "RecordingConnection") -> None:
